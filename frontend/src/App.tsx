@@ -311,25 +311,32 @@ function App() {
     setAnalysisLoading(true);
     setConnectionStatus("Testing backend connection...");
     try {
-      const response = await analyzePrompt("Explain what a firewall does.");
-      const data = await response.json().catch(() => null) as ApiErrorResponse | AnalysisResponse | null;
+      const baseUrl = apiBaseUrl.trim().replace(/\/+$/, "");
+      const response = await fetch(`${baseUrl}/api/v1/prompt/connection-test`, {
+        method: "GET",
+        headers: {
+          "X-API-Key": apiKey.trim(),
+        },
+      });
+      const data = await response.json().catch(() => null) as ApiErrorResponse | null;
 
-      if (response.status === 200) {
-        setConnectionStatus("Successful authenticated connection. API key accepted and backend responded.");
-      } else if (response.status === 403) {
-        const message = formatApiDetail(data as ApiErrorResponse);
+      if (response.ok) {
+        setConnectionStatus(
+          typeof data?.message === "string"
+            ? data.message
+            : "Successful authenticated connection. API key accepted and backend responded."
+        );
+      } else if (response.status === 401 || response.status === 403) {
+        setConnectionStatus(`Invalid API key or insufficient authorization (HTTP ${response.status}).`);
+      } else if (response.status >= 500) {
+        const message = formatApiDetail(data);
         setConnectionStatus(
           message
-            ? `Backend reached successfully, but the test prompt was blocked: ${message}`
-            : "Backend reached successfully, but the test prompt was blocked by security rules."
+            ? `Backend unavailable (HTTP ${response.status}): ${message}`
+            : `Backend unavailable (HTTP ${response.status}).`
         );
-      } else if (response.status === 401) {
-        setConnectionStatus("Invalid API key. Authentication failed (HTTP 401).");
-      } else if (response.status === 422) {
-        const message = formatApiDetail(data as ApiErrorResponse);
-        setConnectionStatus(message ? `Validation error: ${message}` : "Backend validation error (HTTP 422).");
       } else {
-        const message = formatApiDetail(data as ApiErrorResponse);
+        const message = formatApiDetail(data);
         setConnectionStatus(
           message
             ? `Backend error (HTTP ${response.status}): ${message}`

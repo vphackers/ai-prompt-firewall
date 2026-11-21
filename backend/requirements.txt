@@ -4,4 +4,4 @@ uvicorn
 sqlalchemy
 psycopg[binary]
 pydantic-settings
-httpx2
+httpx

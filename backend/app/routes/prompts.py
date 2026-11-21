@@ -23,13 +23,25 @@ from app.security.rate_limiter import check_rate_limit
 from app.security.api_key_auth import get_current_user
 
 from app.services.audit_log_service import get_all_audit_logs
-from app.services.ai_response_service import generate_ai_response
+from app.services.ai_response_service import AIResponseError, generate_ai_response
 
 
 router = APIRouter(
     prefix="/api/v1/prompt",
     tags=["Prompt Security"]
 )
+
+
+@router.get(
+    "/connection-test",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(get_current_user)]
+)
+def connection_test():
+    return {
+        "status": "connected",
+        "message": "Backend connection and API key authentication successful",
+    }
 
 
 # ==========================================
@@ -57,9 +69,13 @@ def analyze_prompt(
 
     # Step 4: Generate response only for SAFE prompts
     ai_response = None
+    ai_response_failed = False
 
     if risk_status == "SAFE":
-        ai_response = generate_ai_response(request.prompt)
+        try:
+            ai_response = generate_ai_response(request.prompt)
+        except AIResponseError:
+            ai_response_failed = True
 
     # Step 5: Prepare block reason
     block_reason = None
@@ -102,6 +118,12 @@ def analyze_prompt(
                 "message": "Prompt did not pass security checks.",
                 **analysis
             }
+        )
+
+    if ai_response_failed:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI response service is temporarily unavailable."
         )
 
     # Step 9: Return analysis and response
