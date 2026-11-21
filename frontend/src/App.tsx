@@ -1,15 +1,20 @@
 
-import { useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import {
   Shield, LayoutDashboard, ScanLine, History, KeyRound, ShieldCheck,
   ShieldAlert, Activity, ArrowRight, LockKeyhole, CircleDot,
-  ChevronDown, Zap, Search, Bell, Settings2, Filter, X, Terminal,
+  ChevronDown, Zap, Search, Bell, Settings2, Filter, X, Terminal, LogOut,
 } from "lucide-react";
 import "./App.css";
 
 type Page = "Overview" | "Prompt Playground" | "Audit Logs" | "API Settings";
+type AuthMode = "login" | "register";
+type AuthStatus = "checking" | "signed-out" | "authenticated";
 type FilterType = "ALL" | "SAFE" | "BLOCKED";
 type HeaderMenu = "search" | "notifications" | "profile" | null;
+
+const API_KEY_SESSION_STORAGE = "prompt-firewall-api-key";
+const API_BASE_URL_SESSION_STORAGE = "prompt-firewall-api-base-url";
 
 type Finding =
   | string
@@ -33,6 +38,10 @@ type AnalysisResponse = {
 type ApiErrorResponse = {
   detail?: unknown;
   message?: string;
+};
+
+type RegistrationResponse = {
+  api_key: string;
 };
 
 type AuditLogRecord = {
@@ -70,14 +79,29 @@ function formatApiDetail(data: ApiErrorResponse | null): string {
 
 function App() {
   const [page, setPage] = useState<Page>("Overview");
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(() =>
+    window.sessionStorage.getItem(API_KEY_SESSION_STORAGE) ? "checking" : "signed-out"
+  );
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [loginApiKey, setLoginApiKey] = useState("");
+  const [registrationName, setRegistrationName] = useState("");
+  const [registrationEmail, setRegistrationEmail] = useState("");
+  const [registrationApiKey, setRegistrationApiKey] = useState("");
+  const [registrationKeyVisible, setRegistrationKeyVisible] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [result, setResult] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("");
-  const [apiBaseUrl, setApiBaseUrl] = useState("http://127.0.0.1:8000");
-  const [apiKey, setApiKey] = useState("");
+  const [apiBaseUrl, setApiBaseUrl] = useState(() =>
+    window.sessionStorage.getItem(API_BASE_URL_SESSION_STORAGE) || "http://127.0.0.1:8000"
+  );
+  const [apiKey, setApiKey] = useState(() =>
+    window.sessionStorage.getItem(API_KEY_SESSION_STORAGE) || ""
+  );
   const [filter, setFilter] = useState<FilterType>("ALL");
   const [search, setSearch] = useState("");
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
@@ -87,6 +111,7 @@ function App() {
   const [keyVisible, setKeyVisible] = useState(false);
   const [headerMenu, setHeaderMenu] = useState<HeaderMenu>(null);
 
+  const isAuthenticated = authStatus === "authenticated";
   const nav = [
     { name: "Overview" as Page, icon: LayoutDashboard },
     { name: "Prompt Playground" as Page, icon: ScanLine },
@@ -99,11 +124,180 @@ function App() {
     setHeaderMenu(null);
   };
 
+  const updateApiBaseUrl = (value: string) => {
+    setApiBaseUrl(value);
+    window.sessionStorage.setItem(API_BASE_URL_SESSION_STORAGE, value);
+  };
+
+  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!loginApiKey.trim() || !apiBaseUrl.trim()) {
+      setAuthError("Enter both the backend URL and your API key.");
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const baseUrl = apiBaseUrl.trim().replace(/\/+$/, "");
+      const response = await fetch(`${baseUrl}/api/v1/prompt/connection-test`, {
+        method: "GET",
+        headers: { "X-API-Key": loginApiKey.trim() },
+      });
+
+      if (response.ok) {
+        const verifiedKey = loginApiKey.trim();
+        window.sessionStorage.setItem(API_KEY_SESSION_STORAGE, verifiedKey);
+        setApiKey(verifiedKey);
+        setLoginApiKey("");
+        setAuthStatus("authenticated");
+        setPage("Overview");
+      } else if (response.status === 401 || response.status === 403) {
+        setAuthError("Invalid API key. Check the key and try again.");
+      } else {
+        const data = await response.json().catch(() => null) as ApiErrorResponse | null;
+        const message = formatApiDetail(data);
+        setAuthError(
+          message
+            ? `Backend error (HTTP ${response.status}): ${message}`
+            : `Unable to sign in (HTTP ${response.status}).`
+        );
+      }
+    } catch {
+      setAuthError("Could not reach the backend. Check the backend URL and CORS configuration.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleRegistration = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!registrationName.trim() || !registrationEmail.trim() || !apiBaseUrl.trim()) {
+      setAuthError("Enter your name, email, and backend URL.");
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const baseUrl = apiBaseUrl.trim().replace(/\/+$/, "");
+      const response = await fetch(`${baseUrl}/users/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: registrationName.trim(),
+          email: registrationEmail.trim(),
+        }),
+      });
+      const data = await response.json().catch(() => null) as
+        (ApiErrorResponse & Partial<RegistrationResponse>) | null;
+
+      if (response.status === 201 && typeof data?.api_key === "string" && data.api_key) {
+        setRegistrationApiKey(data.api_key);
+        setRegistrationName("");
+        setRegistrationEmail("");
+        setRegistrationKeyVisible(false);
+        setAuthError("");
+      } else if (response.status === 409) {
+        setAuthError("An account with this email already exists. Sign in with its API key.");
+      } else {
+        const message = formatApiDetail(data);
+        setAuthError(
+          message
+            ? `Could not create account (HTTP ${response.status}): ${message}`
+            : `Could not create account (HTTP ${response.status}).`
+        );
+      }
+    } catch {
+      setAuthError("Could not reach the backend. Check the backend URL and CORS configuration.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const continueAfterRegistration = () => {
+    if (!registrationApiKey) return;
+    window.sessionStorage.setItem(API_KEY_SESSION_STORAGE, registrationApiKey);
+    setApiKey(registrationApiKey);
+    setRegistrationApiKey("");
+    setAuthStatus("authenticated");
+    setPage("Overview");
+  };
+
+  const handleLogout = () => {
+    window.sessionStorage.removeItem(API_KEY_SESSION_STORAGE);
+    setApiKey("");
+    setAuthStatus("signed-out");
+    setAuthMode("login");
+    setLoginApiKey("");
+    setRegistrationApiKey("");
+    setAuthError("");
+    setPage("Overview");
+    setPrompt("");
+    setSearch("");
+    setFilter("ALL");
+    setAuditLogs([]);
+    setAuditError("");
+    setSelectedAuditLog(null);
+    setAnalysis(null);
+    setResult(false);
+    setErrorMessage("");
+    setConnectionStatus("");
+    setRegistrationName("");
+    setRegistrationEmail("");
+  };
+
   const openLogs = (type: FilterType = "ALL", query = "") => {
     setFilter(type);
     setSearch(query);
     goTo("Audit Logs");
   };
+
+  useEffect(() => {
+    if (authStatus !== "checking") return;
+    let active = true;
+
+    const verifySavedSession = async () => {
+      const savedKey = window.sessionStorage.getItem(API_KEY_SESSION_STORAGE);
+      if (!savedKey) {
+        setAuthStatus("signed-out");
+        return;
+      }
+
+      try {
+        const baseUrl = apiBaseUrl.trim().replace(/\/+$/, "");
+        const response = await fetch(`${baseUrl}/api/v1/prompt/connection-test`, {
+          method: "GET",
+          headers: { "X-API-Key": savedKey },
+        });
+        if (!active) return;
+
+        if (response.ok) {
+          setAuthStatus("authenticated");
+        } else {
+          window.sessionStorage.removeItem(API_KEY_SESSION_STORAGE);
+          setApiKey("");
+          setAuthError(
+            response.status === 401 || response.status === 403
+              ? "Your saved API key is no longer valid. Sign in again."
+              : `Could not verify the saved session (HTTP ${response.status}). Sign in again.`
+          );
+          setAuthStatus("signed-out");
+        }
+      } catch {
+        if (!active) return;
+        window.sessionStorage.removeItem(API_KEY_SESSION_STORAGE);
+        setApiKey("");
+        setAuthError("Could not reach the backend to verify your saved session. Sign in again.");
+        setAuthStatus("signed-out");
+      }
+    };
+
+    void verifySavedSession();
+    return () => {
+      active = false;
+    };
+  }, [apiBaseUrl, authStatus]);
 
   const loadAuditLogs = useCallback(async () => {
     if (!apiKey.trim()) {
@@ -159,12 +353,13 @@ function App() {
   }, [apiBaseUrl, apiKey]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     if (page !== "Overview" && page !== "Audit Logs") return;
     const timer = window.setTimeout(() => {
       void loadAuditLogs();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [page, loadAuditLogs]);
+  }, [isAuthenticated, page, loadAuditLogs]);
 
   const safeAuditLogCount = auditLogs.filter(
     (log) => log.risk_status.toUpperCase() === "SAFE"
@@ -321,6 +516,7 @@ function App() {
       const data = await response.json().catch(() => null) as ApiErrorResponse | null;
 
       if (response.ok) {
+        window.sessionStorage.setItem(API_KEY_SESSION_STORAGE, apiKey.trim());
         setConnectionStatus(
           typeof data?.message === "string"
             ? data.message
@@ -423,6 +619,147 @@ function App() {
     )
   );
 
+  if (!isAuthenticated) {
+    return (
+      <main className="auth-page">
+        <section className="auth-card" aria-labelledby="auth-title">
+          <div className="auth-brand">
+            <div className="brand-icon"><Shield size={21} /></div>
+            <div>
+              <strong>Prompt Firewall</strong>
+              <span>AI SECURITY LAYER</span>
+            </div>
+          </div>
+
+          {authStatus === "checking" ? (
+            <div className="auth-checking" role="status">Checking saved session...</div>
+          ) : registrationApiKey ? (
+            <div className="auth-key-screen">
+              <div className="auth-eyebrow">ACCOUNT CREATED</div>
+              <h1 id="auth-title">Save your API key</h1>
+              <p className="auth-copy">
+                This key is shown only once by the backend. Save it if you need to sign in again.
+              </p>
+              <label htmlFor="new-account-api-key">Generated API key</label>
+              <div className="auth-secret-field">
+                <input
+                  id="new-account-api-key"
+                  className="auth-input"
+                  type={registrationKeyVisible ? "text" : "password"}
+                  value={registrationApiKey}
+                  readOnly
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+                <button
+                  className="auth-reveal-button"
+                  type="button"
+                  onClick={() => setRegistrationKeyVisible((visible) => !visible)}
+                >
+                  {registrationKeyVisible ? "Hide" : "Show"}
+                </button>
+              </div>
+              <p className="auth-note">Click the field to select the key, then copy it.</p>
+              <button className="analyze-button auth-submit" type="button" onClick={continueAfterRegistration}>
+                Continue to dashboard <ArrowRight size={14} />
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="auth-eyebrow">{authMode === "login" ? "SECURE WORKSPACE" : "NEW WORKSPACE"}</div>
+              <h1 id="auth-title">{authMode === "login" ? "Welcome back" : "Create your account"}</h1>
+              <p className="auth-copy">
+                {authMode === "login"
+                  ? "Sign in with the API key generated for your account."
+                  : "Create an account to receive your API key."}
+              </p>
+
+              {authError && <div className="auth-error" role="alert">{authError}</div>}
+
+              <div className="auth-url-field">
+                <label htmlFor="auth-api-base-url">Backend API URL</label>
+                <input
+                  id="auth-api-base-url"
+                  className="auth-input"
+                  type="url"
+                  required
+                  value={apiBaseUrl}
+                  onChange={(event) => updateApiBaseUrl(event.target.value)}
+                  placeholder="http://127.0.0.1:8000"
+                />
+              </div>
+
+              {authMode === "login" ? (
+                <form className="auth-form" onSubmit={handleLogin}>
+                  <label htmlFor="login-api-key">API key</label>
+                  <input
+                    id="login-api-key"
+                    className="auth-input"
+                    type="password"
+                    autoComplete="off"
+                    required
+                    value={loginApiKey}
+                    onChange={(event) => setLoginApiKey(event.target.value)}
+                    placeholder="Paste your generated API key"
+                  />
+                  <button className="analyze-button auth-submit" type="submit" disabled={authLoading}>
+                    {authLoading ? "Signing in..." : "Log in"} <ArrowRight size={14} />
+                  </button>
+                </form>
+              ) : (
+                <form className="auth-form" onSubmit={handleRegistration}>
+                  <label htmlFor="register-name">Name</label>
+                  <input
+                    id="register-name"
+                    className="auth-input"
+                    type="text"
+                    autoComplete="name"
+                    minLength={2}
+                    maxLength={100}
+                    required
+                    value={registrationName}
+                    onChange={(event) => setRegistrationName(event.target.value)}
+                    placeholder="Your name"
+                  />
+                  <label htmlFor="register-email">Email</label>
+                  <input
+                    id="register-email"
+                    className="auth-input"
+                    type="email"
+                    autoComplete="email"
+                    minLength={5}
+                    maxLength={254}
+                    required
+                    value={registrationEmail}
+                    onChange={(event) => setRegistrationEmail(event.target.value)}
+                    placeholder="you@example.com"
+                  />
+                  <button className="analyze-button auth-submit" type="submit" disabled={authLoading}>
+                    {authLoading ? "Creating account..." : "Create account"} <ArrowRight size={14} />
+                  </button>
+                </form>
+              )}
+
+              <div className="auth-switch">
+                {authMode === "login" ? "Need an account?" : "Already have an account?"}
+                <button
+                  type="button"
+                  disabled={authLoading}
+                  onClick={() => {
+                    setAuthMode(authMode === "login" ? "register" : "login");
+                    setAuthError("");
+                  }}
+                >
+                  {authMode === "login" ? "Create account" : "Log in"}
+                </button>
+              </div>
+              <p className="auth-note">Authentication uses your backend-generated API key. No password is collected.</p>
+            </>
+          )}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -472,6 +809,9 @@ function App() {
             </div>
             <ChevronDown size={16} className="profile-chevron" />
           </div>
+          <button className="logout-button" onClick={handleLogout}>
+            <LogOut size={15} /> Log out
+          </button>
         </div>
       </aside>
 
@@ -810,7 +1150,7 @@ function App() {
               <input
                 className="settings-input"
                 value={apiBaseUrl}
-                onChange={(e) => {setApiBaseUrl(e.target.value); setConnectionStatus("");}}
+                onChange={(e) => {updateApiBaseUrl(e.target.value); setConnectionStatus("");}}
                 placeholder="http://127.0.0.1:8000"
               />
               <label>API key</label>
@@ -823,7 +1163,7 @@ function App() {
                 />
                 <button onClick={() => setKeyVisible(v => !v)}>{keyVisible?"Hide":"Show"}</button>
               </div>
-              <div className="settings-hint"><ShieldCheck size={16}/> API key is held in memory only and is not persisted.</div>
+              <div className="settings-hint"><ShieldCheck size={16}/> API key is kept in this browser tab's session and cleared on logout.</div>
               <button className="analyze-button" onClick={testConnection} disabled={analysisLoading}>
                 {analysisLoading ? "Testing..." : "Test connection"} <ArrowRight size={14}/>
               </button>
