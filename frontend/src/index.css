@@ -1,0 +1,50 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700;800&display=swap');
+
+:root {
+  font-family: 'DM Sans', sans-serif;
+  color: #211633;
+  background: #fffaf0;
+
+  --comic-bg: #fffaf0;
+  --comic-ink: #211633;
+  --comic-purple: #7138f5;
+  --comic-orange: #ff8b38;
+  --comic-lime: #d5fa52;
+  --comic-pink: #ff79b9;
+  --comic-border: 2.5px solid #211633;
+  --comic-shadow: 5px 5px 0px #211633;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--comic-bg);
+  color: var(--comic-ink);
+  font-family: 'DM Sans', sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+::selection {
+  background: var(--comic-lime);
+  color: var(--comic-ink);
+}
+
+#root {
+  min-height: 100vh;
+}
