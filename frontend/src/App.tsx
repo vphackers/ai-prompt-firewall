@@ -15,6 +15,7 @@ type HeaderMenu = "search" | "notifications" | "profile" | null;
 
 const API_KEY_SESSION_STORAGE = "prompt-firewall-api-key";
 const API_BASE_URL_SESSION_STORAGE = "prompt-firewall-api-base-url";
+const CONFIGURED_API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim();
 
 type Finding =
   | string
@@ -97,7 +98,9 @@ function App() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("");
   const [apiBaseUrl, setApiBaseUrl] = useState(() =>
-    window.sessionStorage.getItem(API_BASE_URL_SESSION_STORAGE) || "http://127.0.0.1:8000"
+    CONFIGURED_API_BASE_URL ||
+    window.sessionStorage.getItem(API_BASE_URL_SESSION_STORAGE) ||
+    "http://127.0.0.1:8000"
   );
   const [apiKey, setApiKey] = useState(() =>
     window.sessionStorage.getItem(API_KEY_SESSION_STORAGE) || ""
