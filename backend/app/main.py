@@ -1,17 +1,28 @@
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.database.init_db import initialize_database
 from app.routes.database import router as database_router
 from app.routes.users import router as users_router
 from app.routes.prompts import router as prompt_router
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    initialize_database()
+    yield
 
 
 # Create the FastAPI application
 app = FastAPI(
     title="AI Prompt Firewall",
     description="AI Security and Prompt Guardrail Middleware",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
