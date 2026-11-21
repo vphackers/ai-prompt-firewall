@@ -13,23 +13,25 @@ def get_all_audit_logs(
 ):
     """
     Retrieve audit logs belonging only to the specified user.
+
+    Supports risk-status filtering and pagination.
     """
 
-    # Start with the authenticated user's records only
+    # Step 1: Restrict records to the specified user
     query = db.query(PromptAuditLog).filter(
         PromptAuditLog.user_id == user_id
     )
 
-    # Filter by risk status if provided
+    # Step 2: Filter by risk status if provided
     if risk_status is not None:
         query = query.filter(
             PromptAuditLog.risk_status == risk_status.upper()
         )
 
-    # Show newest records first
+    # Step 3: Return newest records first
     query = query.order_by(
         PromptAuditLog.created_at.desc()
     )
 
-    # Apply pagination
+    # Step 4: Apply pagination
     return query.offset(skip).limit(limit).all()

@@ -23,6 +23,7 @@ from app.security.rate_limiter import check_rate_limit
 from app.security.api_key_auth import get_current_user
 
 from app.services.audit_log_service import get_all_audit_logs
+from app.services.ai_response_service import generate_ai_response
 
 
 router = APIRouter(
@@ -44,21 +45,23 @@ def analyze_prompt(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-
-    # Step 1: Apply rate limiting to authenticated user
+    # Step 1: Apply rate limiting
     check_rate_limit(current_user.id)
 
     # Step 2: Inspect the submitted prompt
     analysis = inspect_prompt(request.prompt)
-
     risk_status = analysis["risk_status"]
 
     # Step 3: Normalize prompt for auditing
-    normalized_prompt = normalize_for_detection(
-        request.prompt
-    )
+    normalized_prompt = normalize_for_detection(request.prompt)
 
-    # Step 4: Prepare block reason
+    # Step 4: Generate response only for SAFE prompts
+    ai_response = None
+
+    if risk_status == "SAFE":
+        ai_response = generate_ai_response(request.prompt)
+
+    # Step 5: Prepare block reason
     block_reason = None
 
     if risk_status != "SAFE":
@@ -68,17 +71,17 @@ def analyze_prompt(
             default=str
         )
 
-    # Step 5: Create audit log record
+    # Step 6: Create audit log
     audit_log = PromptAuditLog(
         user_id=current_user.id,
         raw_prompt=request.prompt,
         sanitized_prompt=normalized_prompt,
         risk_status=risk_status,
         block_reason=block_reason,
-        ai_response=None
+        ai_response=ai_response
     )
 
-    # Step 6: Save audit log in PostgreSQL
+    # Step 7: Save audit log in PostgreSQL
     try:
         db.add(audit_log)
         db.commit()
@@ -91,7 +94,7 @@ def analyze_prompt(
             detail="Failed to save prompt audit log."
         )
 
-    # Step 7: Block unsafe prompts after logging
+    # Step 8: Block unsafe prompts after logging
     if risk_status != "SAFE":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -101,13 +104,17 @@ def analyze_prompt(
             }
         )
 
-    # Step 8: Return successful security analysis
-    return analysis
+    # Step 9: Return analysis and response
+    return {
+        **analysis,
+        "ai_response": ai_response
+    }
 
 
 # ==========================================
 # AUDIT LOG RETRIEVAL
 # ==========================================
+
 
 @router.get(
     "/audit-logs",
@@ -115,16 +122,12 @@ def analyze_prompt(
     status_code=status.HTTP_200_OK
 )
 def retrieve_audit_logs(
-    risk_status: str | None = None,
     skip: int = 0,
     limit: int = 50,
+    risk_status: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Retrieve audit logs belonging to the authenticated user.
-    """
-
     # Step 1: Validate pagination
     if skip < 0:
         raise HTTPException(
@@ -148,13 +151,20 @@ def retrieve_audit_logs(
                 detail="Invalid risk status."
             )
 
-    # Step 3: Retrieve only authenticated user's records
-    logs = get_all_audit_logs(
-        db=db,
-        user_id=current_user.id,
-        risk_status=risk_status,
-        skip=skip,
-        limit=limit
-    )
+    # Step 3: Retrieve only the authenticated user's records
+    try:
+        logs = get_all_audit_logs(
+            db=db,
+            user_id=current_user.id,
+            risk_status=risk_status,
+            skip=skip,
+            limit=limit
+        )
 
-    return logs
+        return logs
+
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve audit logs."
+        )

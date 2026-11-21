@@ -32,6 +32,7 @@ class PromptAnalyzeResponse(BaseModel):
     risk_score: int
     risk_status: str
     detected_categories: list[str]
+    ai_response: str | None = None
 
 
 class PromptAuditLogResponse(BaseModel):
